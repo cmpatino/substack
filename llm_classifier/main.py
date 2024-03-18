@@ -10,10 +10,14 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 if __name__ == "__main__":
+    model = "google/gemma-2b-it"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     prompt_template = Template(
+        "<bos><start_of_turn>user\n"
         "Classify the following text into one of the following 4 classes:[World,Sports,Business,Technology]"
-        "\n\nText: $text\nClassification:"
+        "<separator>Text: $text<separator>Classification:"
+        "<end_of_turn>\n"
+        "<start_of_turn>model"
     )
     dataset = load_dataset("sh0416/ag_news")
     dataset = dataset.map(
@@ -33,11 +37,9 @@ if __name__ == "__main__":
     val_loader = DataLoader(dataset["validation"], batch_size=8, shuffle=False)
     test_loader = DataLoader(dataset["test"], batch_size=8, shuffle=False)
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        "mistralai/Mistral-7B-Instruct-v0.2", padding_side="left"
-    )
+    tokenizer = AutoTokenizer.from_pretrained(model, padding_side="left")
     tokenizer.pad_token = tokenizer.unk_token
-    model = AutoModelForCausalLM.from_pretrained("mistralai/Mistral-7B-Instruct-v0.2")
+    model = AutoModelForCausalLM.from_pretrained(model)
     model.to(device)
 
     target_tokens = tokenizer(
@@ -52,14 +54,14 @@ if __name__ == "__main__":
 
     train_loss_hist = []
     val_loss_hist = []
-    train_roc_auc_hist = []
-    val_roc_auc_hist = []
+    train_acc_hist = []
+    val_acc_hist = []
 
-    train_auc_history = []
-    val_auc_history = []
+    train_acc_history = []
+    val_acc_history = []
 
-    train_roc_auc = torchmetrics.BinaryAUROC()
-    val_roc_auc = torchmetrics.BinaryAUROC()
+    train_acc = torchmetrics.classification.MulticlassAccuracy(num_classes=4)
+    val_acc = torchmetrics.classification.MulticlassAccuracy(num_classes=4)
 
     for epoch in tqdm(range(3)):
         train_loss = 0
@@ -78,8 +80,8 @@ if __name__ == "__main__":
             optimizer.zero_grad(set_to_none=True)
 
             train_loss += loss.item()
-            train_roc_auc(preds, batch["label"])
-        train_auc_history.append(train_roc_auc.compute().item())
+            train_acc(preds, batch["label"])
+        train_acc_history.append(train_acc.compute().item())
 
         with torch.no_grad():
             val_loss = 0
@@ -92,8 +94,8 @@ if __name__ == "__main__":
                 preds = torch.softmax(filtered_logits, dim=-1)
 
                 val_loss += criterion(preds, batch["label"]).item()
-                val_roc_auc(preds, batch["label"])
-            val_auc_history.append(val_roc_auc.compute().item())
+                val_acc(preds, batch["label"])
+            val_acc_history.append(val_acc.compute().item())
 
             print(f"Epoch {epoch}: Validation Loss: {val_loss/len(val_loader)}")
 
@@ -102,7 +104,7 @@ if __name__ == "__main__":
         torch.save(model.state_dict(), f"model_{epoch}.pt")
         print(f"Epoch {epoch}: Train Loss: {train_loss/len(train_loader)}")
 
-    test_roc_auc = torchmetrics.BinaryAUROC()
+    test_acc = torchmetrics.classification.MulticlassAccuracy(num_classes=4)
 
     with torch.no_grad():
         test_loss = 0
@@ -115,9 +117,9 @@ if __name__ == "__main__":
             preds = torch.softmax(filtered_logits, dim=-1)
 
             test_loss += criterion(preds, batch["label"]).item()
-            test_roc_auc(torch.softmax(filtered_logits, dim=-1), batch["label"])
+            test_acc(torch.softmax(filtered_logits, dim=-1), batch["label"])
 
-        print(f"Test AUC: {test_roc_auc.compute().item()}")
+        print(f"Test AUC: {test_acc.compute().item()}")
         print(f"Test Loss: {test_loss/len(test_loader)}")
 
     with open("metrics.json", "w") as f:
@@ -126,9 +128,9 @@ if __name__ == "__main__":
                 "train_loss": train_loss_hist,
                 "val_loss": val_loss_hist,
                 "test_loss": test_loss / len(test_loader),
-                "train_auc": train_auc_history,
-                "val_auc": val_auc_history,
-                "test_auc": test_roc_auc.compute(),
+                "train_auc": train_acc_history,
+                "val_auc": val_acc_history,
+                "test_auc": test_acc.compute(),
             },
             f,
         )
