@@ -10,6 +10,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     prompt_template = Template(
         "Classify the following text into one of the following 4 classes:[World,Sports,Business,Technology]"
         "\n\nText: $text\nClassification:"
@@ -37,6 +38,7 @@ if __name__ == "__main__":
     )
     tokenizer.pad_token = tokenizer.unk_token
     model = AutoModelForCausalLM.from_pretrained("mistralai/Mistral-7B-Instruct-v0.2")
+    model.to(device)
 
     target_tokens = tokenizer(
         ["World", "Sports", "Business", "Technology"],
@@ -63,6 +65,7 @@ if __name__ == "__main__":
         train_loss = 0
         for batch in tqdm(train_loader, desc="Training", leave=False):
             input_ids = tokenizer(batch["text"], return_tensors="pt", padding=True)
+            input_ids = {k: v.to(device) for k, v in input_ids.items()}
             outputs = model(**input_ids)
             logits = outputs.logits[:, -1, :]
             filtered_logits = logits[:, target_tokens]
@@ -76,12 +79,13 @@ if __name__ == "__main__":
 
             train_loss += loss.item()
             train_roc_auc(preds, batch["label"])
-        train_auc_history.append(train_roc_auc.compute())
+        train_auc_history.append(train_roc_auc.compute().item())
 
         with torch.no_grad():
             val_loss = 0
             for batch in tqdm(val_loader, desc="Validation", leave=False):
                 input_ids = tokenizer(batch["text"], return_tensors="pt", padding=True)
+                input_ids = {k: v.to(device) for k, v in input_ids.items()}
                 outputs = model(**input_ids)
                 logits = outputs.logits[:, -1, :]
                 filtered_logits = logits[:, target_tokens].squeeze()
@@ -89,7 +93,7 @@ if __name__ == "__main__":
 
                 val_loss += criterion(preds, batch["label"]).item()
                 val_roc_auc(preds, batch["label"])
-            val_auc_history.append(val_roc_auc.compute())
+            val_auc_history.append(val_roc_auc.compute().item())
 
             print(f"Epoch {epoch}: Validation Loss: {val_loss/len(val_loader)}")
 
@@ -104,6 +108,7 @@ if __name__ == "__main__":
         test_loss = 0
         for batch in tqdm(test_loader, desc="Testing", leave=False):
             input_ids = tokenizer(batch["text"], return_tensors="pt", padding=True)
+            input_ids = {k: v.to(device) for k, v in input_ids.items()}
             outputs = model(**input_ids)
             logits = outputs.logits[:, -1, :]
             filtered_logits = logits[:, target_tokens].squeeze()
@@ -112,7 +117,7 @@ if __name__ == "__main__":
             test_loss += criterion(preds, batch["label"]).item()
             test_roc_auc(torch.softmax(filtered_logits, dim=-1), batch["label"])
 
-        print(f"Test AUC: {test_roc_auc.compute()}")
+        print(f"Test AUC: {test_roc_auc.compute().item()}")
         print(f"Test Loss: {test_loss/len(test_loader)}")
 
     with open("metrics.json", "w") as f:
