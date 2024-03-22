@@ -33,14 +33,15 @@ if __name__ == "__main__":
     dataset["train"] = train_val_split["train"]
     dataset["validation"] = train_val_split["test"]
 
-    train_loader = DataLoader(dataset["train"], batch_size=8, shuffle=True)
-    val_loader = DataLoader(dataset["validation"], batch_size=8, shuffle=False)
-    test_loader = DataLoader(dataset["test"], batch_size=8, shuffle=False)
+    train_loader = DataLoader(dataset["train"], batch_size=8, shuffle=True, pin_memory=True, num_workers=4)
+    val_loader = DataLoader(dataset["validation"], batch_size=8, shuffle=False, pin_memory=True, num_workers=4)
+    test_loader = DataLoader(dataset["test"], batch_size=8, shuffle=False, pin_memory=True, num_workers=4)
 
     tokenizer = AutoTokenizer.from_pretrained(model, padding_side="left")
     tokenizer.pad_token = tokenizer.unk_token
-    model = AutoModelForCausalLM.from_pretrained(model)
-    model.to(device)
+    model = AutoModelForCausalLM.from_pretrained(
+        model, device_map="auto", torch_dtype=torch.float32
+    )
 
     target_tokens = tokenizer(
         ["World", "Sports", "Business", "Technology"],
@@ -50,7 +51,7 @@ if __name__ == "__main__":
     )["input_ids"].squeeze()
 
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
+    optimizer = torch.optim.SGD(model.parameters(), lr=1e-5)
 
     train_loss_hist = []
     val_loss_hist = []
@@ -73,7 +74,7 @@ if __name__ == "__main__":
             filtered_logits = logits[:, target_tokens]
             preds = torch.softmax(filtered_logits, dim=-1)
 
-            loss = criterion(preds, batch["label"])
+            loss = criterion(preds, batch["label"].to(device))
             loss.backward()
 
             optimizer.step()
